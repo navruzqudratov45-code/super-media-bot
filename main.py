@@ -1,5 +1,18 @@
 import asyncio
 import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+def dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"Bot 24/7 ishlamoqda!")
+    HTTPServer(('0.0.0.0', port), Handler).serve_forever()
+
+threading.Thread(target=dummy_server, daemon=True).start()
 import yt_dlp
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
