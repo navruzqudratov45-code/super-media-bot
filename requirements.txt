@@ -1,4 +1,6 @@
 aiogram
 yt-dlp
 python-dotenv
-shazamio
+acrcloud
+pylast
+requests
