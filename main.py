@@ -2,18 +2,6 @@ import asyncio
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-
-def dummy_server():
-    port = int(os.environ.get("PORT", 10000))
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"Bot 24/7 ishlamoqda!")
-    HTTPServer(('0.0.0.0', port), Handler).serve_forever()
-
-threading.Thread(target=dummy_server, daemon=True).start()
-
 import yt_dlp
 from shazamio import Shazam
 from aiogram import Bot, Dispatcher, F
@@ -41,6 +29,7 @@ main_menu = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
+# 1. Video yuklash funksiyasi
 def download_media(url):
     ydl_opts = {
         'format': 'best[ext=mp4]/best',
@@ -51,6 +40,22 @@ def download_media(url):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         return ydl.prepare_filename(info)
+
+# 2. Musiqa (Audio) qidirish va yuklash funksiyasi
+def download_audio_from_youtube(query):
+    ydl_opts = {
+        'format': 'bestaudio[ext=m4a]/bestaudio', # m4a Telegram uchun mos tushadi
+        'quiet': True,
+        'no_warnings': True,
+        'outtmpl': 'temp_audio_%(id)s.%(ext)s',
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        # ytsearch1: orqali internetdan eng zo'r bitta natijani topamiz
+        info = ydl.extract_info(f"ytsearch1:{query}", download=True)
+        if 'entries' in info and len(info['entries']) > 0:
+            video_info = info['entries'][0]
+            return ydl.prepare_filename(video_info), video_info.get('title'), video_info.get('uploader')
+    return None, None, None
 
 @dp.message(CommandStart())
 async def start_handler(message: Message):
@@ -64,19 +69,17 @@ async def ask_for_link(message: Message):
 @dp.message(F.text == "📊 Statistikam")
 async def show_stats(message: Message):
     ADMIN_ID = 7788049741 
-    
     if message.from_user.id == ADMIN_ID:
         users_count = count_users()
         await message.answer(f"📊 *Bot statistikasi:*\n\nJami foydalanuvchilar: {users_count} ta odam", parse_mode="Markdown")
     else:
         await message.answer("Kechirasiz, statistika faqat admin uchun yopiq! 🔒")
 
-# YANGILANGAN SHAZAM FUNKSIYASI (Endi videolarni ham oladi)
+# 3. SHAZAM FUNKSIYASI (Eshitadi va yuklab beradi)
 @dp.message(F.audio | F.voice | F.video)
 async def handle_media_for_shazam(message: Message):
     wait_msg = await message.answer("🎵 Musiqa qidirilmoqda (Shazam)...")
     try:
-        # Fayl turini aniqlaymiz va olamiz
         if message.voice:
             file_id = message.voice.file_id
             file_extension = ".ogg"
@@ -90,29 +93,39 @@ async def handle_media_for_shazam(message: Message):
         file = await bot.get_file(file_id)
         file_path = f"temp_media_{file_id}{file_extension}"
         
-        # Faylni vaqtincha serverga yuklab olamiz
         await bot.download_file(file.file_path, file_path)
 
-        # Shazam orqali aniqlash
         shazam = Shazam()
         out = await shazam.recognize(file_path)
+
+        # Videoni xotiradan o'chiramiz
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
         if 'track' in out:
             title = out['track']['title']
             artist = out['track']['subtitle']
-            text = f"🎧 *Musiqa topildi!*\n\n👤 *Qo'shiqchi:* {artist}\n🎵 *Nomi:* {title}"
-            await wait_msg.edit_text(text, parse_mode="Markdown")
+            await wait_msg.edit_text(f"🎧 *Musiqa topildi!*\n\n👤 *Qo'shiqchi:* {artist}\n🎵 *Nomi:* {title}\n\n📥 _Endi faylni internetdan topib yuklayapman, biroz kuting..._", parse_mode="Markdown")
+            
+            # Musiqani nomi orqali qidirib yuklaymiz
+            query = f"{artist} {title}"
+            audio_path, yt_title, yt_artist = await asyncio.to_thread(download_audio_from_youtube, query)
+            
+            if audio_path and os.path.exists(audio_path):
+                audio = FSInputFile(audio_path)
+                await message.answer_audio(audio, title=title, performer=artist, caption="Mana o'sha musiqa! 🎧")
+                os.remove(audio_path)
+                await wait_msg.delete()
+            else:
+                await wait_msg.edit_text(f"🎧 *Musiqa topildi!*\n\n👤 *Qo'shiqchi:* {artist}\n🎵 *Nomi:* {title}\n\n❌ _Afsuski musiqaning faylini tortib bo'lmadi._", parse_mode="Markdown")
         else:
             await wait_msg.edit_text("🤷‍♂️ Afsuski, bu musiqani topa olmadim yoki ovoz aniq emas.")
 
-        # Vaqtinchalik faylni o'chirib tashlash
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
     except Exception as e:
-        await wait_msg.edit_text("❌ Xatolik yuz berdi yoki fayl hajmi juda katta (Telegram chegarasi: 20MB).")
+        await wait_msg.edit_text("❌ Xatolik yuz berdi. Fayl juda katta bo'lishi mumkin.")
         print(f"Shazam xatosi: {e}")
 
+# 4. LINK UCHUN (Video tortib beruvchi funksiya)
 @dp.message(F.text.regexp(r'(https?://)?(www\.)?(youtube\.com|youtu\.?be|instagram\.com)/.+'))
 async def handle_media_link(message: Message):
     url = message.text
@@ -134,8 +147,42 @@ async def handle_media_link(message: Message):
             os.remove(file_path)
         await wait_msg.delete()
     except Exception as e:
-        await wait_msg.edit_text(f"❌ Yuklab bo'lmadi. Linkni tekshiring.")
-        print(f"Xato: {e}")
+        await wait_msg.edit_text("❌ Yuklab bo'lmadi. Linkni tekshiring.")
+        print(f"Link xatosi: {e}")
+
+# 5. MATN UCHUN (Faqat musiqa yozib qidirganda)
+@dp.message(F.text)
+async def handle_text_search(message: Message):
+    text = message.text
+    # Tugmalarni bosganda musiqa qidirmasligi uchun
+    if text in ["📹 Video yuklash", "📊 Statistikam", "/start"]:
+        return
+        
+    wait_msg = await message.answer(f"🔍 '{text}' musiqasi qidirilmoqda...")
+    try:
+        audio_path, yt_title, yt_artist = await asyncio.to_thread(download_audio_from_youtube, text)
+        if audio_path and os.path.exists(audio_path):
+            audio = FSInputFile(audio_path)
+            await message.answer_audio(audio, title=yt_title, performer=yt_artist, caption="Musiqa topildi! ⚡")
+            os.remove(audio_path)
+            await wait_msg.delete()
+        else:
+            await wait_msg.edit_text("🤷‍♂️ Kechirasiz, bunday musiqa topa olmadim.")
+    except Exception as e:
+        await wait_msg.edit_text("❌ Qidirishda xatolik yuz berdi.")
+        print(f"Qidiruv xatosi: {e}")
+
+# SERVER UZILIb QOLMASLIGI UCHUN
+def dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"Bot 24/7 ishlamoqda!")
+    HTTPServer(('0.0.0.0', port), Handler).serve_forever()
+
+threading.Thread(target=dummy_server, daemon=True).start()
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
