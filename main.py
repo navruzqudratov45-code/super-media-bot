@@ -26,6 +26,14 @@ main_menu = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
+# --- LINK TOZALAGICH (Yangi qoshildi) ---
+def clean_link(url):
+    # Bu funksiya linkning oxiridagi ortiqcha "?igsh=..." kabi dumlarni qirqib tashlaydi
+    if "youtube.com/watch" in url:
+        return url.split('&')[0]
+    else:
+        return url.split('?')[0]
+
 # 1. Video yuklash funksiyasi
 def download_media(url):
     ydl_opts = {
@@ -38,7 +46,7 @@ def download_media(url):
         info = ydl.extract_info(url, download=True)
         return ydl.prepare_filename(info)
 
-# 2. Yangi: SOUNDCLOUD orqali musiqa qidirish va tortish 🎵
+# 2. SOUNDCLOUD orqali musiqa qidirish
 def download_audio_from_soundcloud(query):
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -47,7 +55,6 @@ def download_audio_from_soundcloud(query):
         'outtmpl': 'temp_audio_%(id)s.%(ext)s',
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        # e'tibor bering: scsearch1 ishlatyapmiz!
         info = ydl.extract_info(f"scsearch1:{query}", download=True)
         if 'entries' in info and len(info['entries']) > 0:
             track_info = info['entries'][0]
@@ -72,7 +79,7 @@ async def show_stats(message: Message):
     else:
         await message.answer("Kechirasiz, statistika faqat admin uchun yopiq! 🔒")
 
-# 3. SHAZAM + SOUNDCLOUD
+# 3. SHAZAM 
 @dp.message(F.audio | F.voice | F.video)
 async def handle_media_for_shazam(message: Message):
     wait_msg = await message.answer("🎵 Musiqa qidirilmoqda (Shazam)...")
@@ -103,13 +110,12 @@ async def handle_media_for_shazam(message: Message):
             artist = out['track']['subtitle']
             await wait_msg.edit_text(f"🎧 *Musiqa topildi!*\n\n👤 *Qo'shiqchi:* {artist}\n🎵 *Nomi:* {title}\n\n📥 _Endi uni SoundCloud'dan yuklayapman, biroz kuting..._", parse_mode="Markdown")
             
-            # SoundCloud'dan qidirish
             query = f"{artist} {title}"
             audio_path, sc_title, sc_artist = await asyncio.to_thread(download_audio_from_soundcloud, query)
             
             if audio_path and os.path.exists(audio_path):
                 audio = FSInputFile(audio_path)
-                await message.answer_audio(audio, title=title, performer=artist, caption="Mana o'sha musiqa (SoundCloud orqali)! 🎧")
+                await message.answer_audio(audio, title=title, performer=artist, caption="Mana o'sha musiqa! 🎧")
                 os.remove(audio_path)
                 await wait_msg.delete()
             else:
@@ -118,7 +124,7 @@ async def handle_media_for_shazam(message: Message):
             await wait_msg.edit_text("🤷‍♂️ Afsuski, bu musiqani topa olmadim yoki ovoz aniq emas.")
 
     except Exception as e:
-        await wait_msg.edit_text(f"❌ Xatolik yuz berdi: {e}")
+        await wait_msg.edit_text("❌ Xatolik yuz berdi, fayl hajmi katta yoki format mos emas.")
         print(f"Shazam xatosi: {e}")
 
 # 4. MATNLI QIDIRUV (SOUNDCLOUD)
@@ -128,7 +134,7 @@ async def handle_text_search(message: Message):
     if text in ["📹 Video yuklash", "📊 Statistikam", "/start"]:
         return
         
-    wait_msg = await message.answer(f"🔍 '{text}' musiqasi SoundCloud'dan qidirilmoqda...")
+    wait_msg = await message.answer(f"🔍 '{text}' musiqasi qidirilmoqda...")
     try:
         audio_path, sc_title, sc_artist = await asyncio.to_thread(download_audio_from_soundcloud, text)
         if audio_path and os.path.exists(audio_path):
@@ -137,34 +143,37 @@ async def handle_text_search(message: Message):
             os.remove(audio_path)
             await wait_msg.delete()
         else:
-            await wait_msg.edit_text("🤷‍♂️ Kechirasiz, bunday musiqa SoundCloud'dan topilmadi.")
+            await wait_msg.edit_text("🤷‍♂️ Kechirasiz, bunday musiqa topilmadi.")
     except Exception as e:
         await wait_msg.edit_text("❌ Qidirishda xatolik yuz berdi.")
         print(f"Qidiruv xatosi: {e}")
 
-# 5. LINK UCHUN (Video yuklash)
+# 5. LINK UCHUN (Video yuklash + Xotirani tekshirish)
 @dp.message(F.text.regexp(r'(https?://)?(www\.)?(youtube\.com|youtu\.?be|instagram\.com|soundcloud\.com)/.+'))
 async def handle_media_link(message: Message):
-    url = message.text
+    original_url = message.text
+    url = clean_link(original_url) # Linkning dumini qirqib tashlaymiz
+    
     cached_file_id = get_video(url)
 
     if cached_file_id:
         try:
-            await message.answer_video(cached_file_id, caption="Mana videongiz! ⚡")
+            # Agar bazada bor bo'lsa, "(bazadan olindi)" deb yozib beradi
+            await message.answer_video(cached_file_id, caption="Mana videongiz (bazadan olindi)! ⚡")
             return
         except:
             pass
 
-    wait_msg = await message.answer("⏳ Media yuklanmoqda...")
+    wait_msg = await message.answer("⏳ Video yuklanmoqda (internetdan)...")
     try:
         file_path = await asyncio.to_thread(download_media, url)
         sent = await message.answer_video(FSInputFile(file_path))
-        save_video(url, sent.video.file_id)
+        save_video(url, sent.video.file_id) # Tozalangan link bilan bazaga saqlaymiz
         if os.path.exists(file_path):
             os.remove(file_path)
         await wait_msg.delete()
     except Exception as e:
-        await wait_msg.edit_text("❌ Yuklab bo'lmadi. Linkni tekshiring.")
+        await wait_msg.edit_text("❌ Yuklab bo'lmadi. Linkni tekshiring yoki sayt himoyalangan.")
         print(f"Link xatosi: {e}")
 
 def dummy_server():
