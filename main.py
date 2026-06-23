@@ -13,15 +13,15 @@ def dummy_server():
     HTTPServer(('0.0.0.0', port), Handler).serve_forever()
 
 threading.Thread(target=dummy_server, daemon=True).start()
+
 import yt_dlp
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, FSInputFile, ReplyKeyboardMarkup, KeyboardButton
-from aiogram.enums import ChatMemberStatus
 from dotenv import load_dotenv
 
 # O'zingiz yozgan fayllar
-from database import init_db, save_video, get_video
+from database import init_db, save_video, get_video, save_user, count_users
 from middlewares import SubscriptionMiddleware
 
 load_dotenv()
@@ -36,10 +36,9 @@ init_db()
 
 # Tugmalar
 main_menu = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="🎥 Video yuklash"), KeyboardButton(text="📊 Statistikam")]],
+    keyboard=[[KeyboardButton(text="📹 Video yuklash"), KeyboardButton(text="📊 Statistikam")]],
     resize_keyboard=True
 )
-
 
 def download_media(url):
     ydl_opts = {
@@ -52,21 +51,26 @@ def download_media(url):
         info = ydl.extract_info(url, download=True)
         return ydl.prepare_filename(info)
 
-
 @dp.message(CommandStart())
 async def start_handler(message: Message):
+    # Foydalanuvchini bazaga saqlaymiz
+    save_user(message.from_user.id, message.from_user.first_name)
     await message.answer("Salom! Super Media Bot ishga tushdi. Quyidagilardan birini tanlang:", reply_markup=main_menu)
 
-
-@dp.message(F.text == "🎥 Video yuklash")
+@dp.message(F.text == "📹 Video yuklash")
 async def ask_for_link(message: Message):
     await message.answer("Video linkini yuboring (YouTube yoki Instagram):")
 
-
 @dp.message(F.text == "📊 Statistikam")
 async def show_stats(message: Message):
-    await message.answer("Botimiz hozirda sinov rejimida. 🚀")
-
+    # DİQQAT: Pastdagi 123456789 o'rniga o'z Telegram ID raqamingizni yozing!
+    ADMIN_ID = 123456789 
+    
+    if message.from_user.id == ADMIN_ID:
+        users_count = count_users()
+        await message.answer(f"📊 *Bot statistikasi:*\n\nJami foydalanuvchilar: {users_count} ta odam", parse_mode="Markdown")
+    else:
+        await message.answer("Kechirasiz, statistika faqat admin uchun yopiq! 🔒")
 
 @dp.message(F.text.regexp(r'(https?://)?(www\.)?(youtube\.com|youtu\.?be|instagram\.com)/.+'))
 async def handle_media_link(message: Message):
@@ -75,7 +79,7 @@ async def handle_media_link(message: Message):
 
     if cached_file_id:
         try:
-            await message.answer_video(cached_file_id, caption="Mana videongiz! ⚡️")
+            await message.answer_video(cached_file_id, caption="Mana videongiz! ⚡")
             return
         except:
             pass
@@ -92,11 +96,9 @@ async def handle_media_link(message: Message):
         await wait_msg.edit_text(f"❌ Yuklab bo'lmadi. Linkni tekshiring.")
         print(f"Xato: {e}")
 
-
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
