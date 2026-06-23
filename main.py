@@ -72,6 +72,7 @@ async def handle_media(message: Message):
         print(f"Xatolik: {e}")
 
 async def main():
+    # Eski ulanishlarni o'chirib, toza boshlash
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
