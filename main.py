@@ -63,8 +63,8 @@ async def ask_for_link(message: Message):
 
 @dp.message(F.text == "📊 Statistikam")
 async def show_stats(message: Message):
-    # DİQQAT: Pastdagi 123456789 o'rniga o'z Telegram ID raqamingizni yozing!
-    ADMIN_ID = 123456789 
+    # Sizning shaxsiy ID raqamingiz
+    ADMIN_ID = 7788049741 
     
     if message.from_user.id == ADMIN_ID:
         users_count = count_users()
