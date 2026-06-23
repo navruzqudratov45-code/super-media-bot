@@ -15,21 +15,18 @@ from middlewares import SubscriptionMiddleware
 
 load_dotenv()
 
-# Bot va Dispatcher
 bot = Bot(token=os.getenv("BOT_TOKEN"))
 dp = Dispatcher()
 
-# Middleware va Baza
 dp.message.middleware(SubscriptionMiddleware())
 init_db()
 
-# Tugmalar
 main_menu = ReplyKeyboardMarkup(
     keyboard=[[KeyboardButton(text="📹 Video yuklash"), KeyboardButton(text="📊 Statistikam")]],
     resize_keyboard=True
 )
 
-# 1. Video yuklash funksiyasi (Muammosiz)
+# 1. Video yuklash funksiyasi
 def download_media(url):
     ydl_opts = {
         'format': 'best[ext=mp4]/best',
@@ -40,6 +37,22 @@ def download_media(url):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         return ydl.prepare_filename(info)
+
+# 2. Yangi: SOUNDCLOUD orqali musiqa qidirish va tortish 🎵
+def download_audio_from_soundcloud(query):
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'quiet': True,
+        'no_warnings': True,
+        'outtmpl': 'temp_audio_%(id)s.%(ext)s',
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        # e'tibor bering: scsearch1 ishlatyapmiz!
+        info = ydl.extract_info(f"scsearch1:{query}", download=True)
+        if 'entries' in info and len(info['entries']) > 0:
+            track_info = info['entries'][0]
+            return ydl.prepare_filename(track_info), track_info.get('title'), track_info.get('uploader')
+    return None, None, None
 
 @dp.message(CommandStart())
 async def start_handler(message: Message):
@@ -59,7 +72,7 @@ async def show_stats(message: Message):
     else:
         await message.answer("Kechirasiz, statistika faqat admin uchun yopiq! 🔒")
 
-# 2. SOF SHAZAM (Faqat musiqani eshitib nomini topadi, blokirovkaga tushmaydi!)
+# 3. SHAZAM + SOUNDCLOUD
 @dp.message(F.audio | F.voice | F.video)
 async def handle_media_for_shazam(message: Message):
     wait_msg = await message.answer("🎵 Musiqa qidirilmoqda (Shazam)...")
@@ -88,16 +101,49 @@ async def handle_media_for_shazam(message: Message):
         if 'track' in out:
             title = out['track']['title']
             artist = out['track']['subtitle']
-            await wait_msg.edit_text(f"🎧 *Musiqa topildi!*\n\n👤 *Qo'shiqchi:* {artist}\n🎵 *Nomi:* {title}\n\n_(YouTube himoyasi sababli bot faqat musiqa nomini aniqlaydi)_", parse_mode="Markdown")
+            await wait_msg.edit_text(f"🎧 *Musiqa topildi!*\n\n👤 *Qo'shiqchi:* {artist}\n🎵 *Nomi:* {title}\n\n📥 _Endi uni SoundCloud'dan yuklayapman, biroz kuting..._", parse_mode="Markdown")
+            
+            # SoundCloud'dan qidirish
+            query = f"{artist} {title}"
+            audio_path, sc_title, sc_artist = await asyncio.to_thread(download_audio_from_soundcloud, query)
+            
+            if audio_path and os.path.exists(audio_path):
+                audio = FSInputFile(audio_path)
+                await message.answer_audio(audio, title=title, performer=artist, caption="Mana o'sha musiqa (SoundCloud orqali)! 🎧")
+                os.remove(audio_path)
+                await wait_msg.delete()
+            else:
+                await wait_msg.edit_text(f"🎧 *Musiqa topildi!*\n\n👤 *Qo'shiqchi:* {artist}\n🎵 *Nomi:* {title}\n\n❌ _Afsuski, bu musiqa SoundCloud bazasida topilmadi._", parse_mode="Markdown")
         else:
             await wait_msg.edit_text("🤷‍♂️ Afsuski, bu musiqani topa olmadim yoki ovoz aniq emas.")
 
     except Exception as e:
-        await wait_msg.edit_text("❌ Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
+        await wait_msg.edit_text(f"❌ Xatolik yuz berdi: {e}")
         print(f"Shazam xatosi: {e}")
 
-# 3. LINK UCHUN (Video tortib beruvchi funksiya)
-@dp.message(F.text.regexp(r'(https?://)?(www\.)?(youtube\.com|youtu\.?be|instagram\.com)/.+'))
+# 4. MATNLI QIDIRUV (SOUNDCLOUD)
+@dp.message(F.text & ~F.text.startswith("http"))
+async def handle_text_search(message: Message):
+    text = message.text
+    if text in ["📹 Video yuklash", "📊 Statistikam", "/start"]:
+        return
+        
+    wait_msg = await message.answer(f"🔍 '{text}' musiqasi SoundCloud'dan qidirilmoqda...")
+    try:
+        audio_path, sc_title, sc_artist = await asyncio.to_thread(download_audio_from_soundcloud, text)
+        if audio_path and os.path.exists(audio_path):
+            audio = FSInputFile(audio_path)
+            await message.answer_audio(audio, title=sc_title or text, performer=sc_artist or "Noma'lum", caption="Musiqa topildi! ⚡")
+            os.remove(audio_path)
+            await wait_msg.delete()
+        else:
+            await wait_msg.edit_text("🤷‍♂️ Kechirasiz, bunday musiqa SoundCloud'dan topilmadi.")
+    except Exception as e:
+        await wait_msg.edit_text("❌ Qidirishda xatolik yuz berdi.")
+        print(f"Qidiruv xatosi: {e}")
+
+# 5. LINK UCHUN (Video yuklash)
+@dp.message(F.text.regexp(r'(https?://)?(www\.)?(youtube\.com|youtu\.?be|instagram\.com|soundcloud\.com)/.+'))
 async def handle_media_link(message: Message):
     url = message.text
     cached_file_id = get_video(url)
@@ -109,7 +155,7 @@ async def handle_media_link(message: Message):
         except:
             pass
 
-    wait_msg = await message.answer("⏳ Video yuklanmoqda...")
+    wait_msg = await message.answer("⏳ Media yuklanmoqda...")
     try:
         file_path = await asyncio.to_thread(download_media, url)
         sent = await message.answer_video(FSInputFile(file_path))
@@ -118,15 +164,9 @@ async def handle_media_link(message: Message):
             os.remove(file_path)
         await wait_msg.delete()
     except Exception as e:
-        await wait_msg.edit_text("❌ Yuklab bo'lmadi. Link noto'g'ri yoki sayt himoyalangan.")
+        await wait_msg.edit_text("❌ Yuklab bo'lmadi. Linkni tekshiring.")
         print(f"Link xatosi: {e}")
 
-# Qolgan oddiy yozuvlarga javob bermasligi uchun
-@dp.message(F.text)
-async def ignore_text(message: Message):
-    pass
-
-# SERVER UZILIb QOLMASLIGI UCHUN
 def dummy_server():
     port = int(os.environ.get("PORT", 10000))
     class Handler(BaseHTTPRequestHandler):
