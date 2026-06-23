@@ -4,3 +4,4 @@ python-dotenv
 acrcloud
 pylast
 requests
+aiohttp
